@@ -32,13 +32,21 @@ def build_user_prompt(req: ExplainRequest) -> str:
             + (f" (가중치 {f.score})" if f.score is not None else "")
             for f in req.risk_factors
         )
+    else:
+        factors_lines = "[탐지된 위험 요소 없음]"
+        if req.ml_phishing_probability_percent is not None and (
+            req.ml_phishing_probability_percent >= 70
+        ):
+            factors_lines += (
+                "\n- (ML 모델만 높은 점수: 위 ML 확률을 설명의 근거로 반영하세요.)"
+            )
 
     return f"""
 [자동 분석 결과]
 {hops}{ml_line}- 위험 점수 (0~100): {req.score}
 - 최종 판정: {display}
 
-{factors_lines or "[탐지된 위험 요소 없음]"}
+{factors_lines}
 
 아래 JSON 형식으로만 응답하세요. 백틱 없이 순수 JSON만 출력하세요.
 

@@ -15,6 +15,9 @@ _SUSPICIOUS_TLDS: tuple[str, ...] = (
     ".ga",
     ".cf",
     ".gq",
+    ".info",
+    ".top",
+    ".icu",
 )
 _REDIRECT_STATUSES: frozenset[int] = frozenset({301, 302, 303, 307, 308})
 

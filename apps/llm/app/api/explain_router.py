@@ -1,12 +1,9 @@
 # -*- coding: utf-8 -*-
 import asyncio
-from urllib.parse import urlparse
 
 from fastapi import APIRouter, Depends
 
 from app.core.config import Settings
-from app.ml.model import predict_phishing_score
-from app.ml.redirect import calculate_redirect_score, trace_redirects
 from app.schemas.explain import (
     AnalyzeRequest,
     AnalyzeResponse,
@@ -14,22 +11,16 @@ from app.schemas.explain import (
     ExplainResponse,
     GradeKoLiteral,
     LevelLiteral,
-    RiskFactor,
 )
+from app.schemas.score import ScoreRequest, ScoreResponse
 from app.services.gemini_service import explain_with_gemini
+from app.services.middle_score import compute_middle_score, normalize_url
 
 router = APIRouter(tags=["explain"])
 
 
 def get_settings() -> Settings:
     return Settings()
-
-
-def _normalize_url(u: str) -> str:
-    s = u.strip()
-    if not urlparse(s).scheme:
-        return "https://" + s
-    return s
 
 
 def _level_and_grade(total_score: int) -> tuple[LevelLiteral, GradeKoLiteral]:
@@ -40,6 +31,21 @@ def _level_and_grade(total_score: int) -> tuple[LevelLiteral, GradeKoLiteral]:
     return "safe", "안전"
 
 
+def _provisional_total(ml_score: float | None, redirect_score: int) -> int:
+    ml_part = int(ml_score) if ml_score is not None else 0
+    return min(ml_part + redirect_score, 100)
+
+
+@router.post(
+    "/api/agent/score",
+    response_model=ScoreResponse,
+    summary="백 연동용 중간 점수 (ML + 리다이렉트)",
+)
+async def agent_score(body: ScoreRequest) -> ScoreResponse:
+    data = await compute_middle_score(body.url)
+    return ScoreResponse(**data)
+
+
 @router.post("/api/agent/explain", response_model=ExplainResponse)
 async def agent_explain(
     body: ExplainRequest,
@@ -48,36 +54,31 @@ async def agent_explain(
     return await asyncio.to_thread(explain_with_gemini, settings, body)
 
 
-@router.post("/api/agent/analyze", response_model=AnalyzeResponse)
+@router.post(
+    "/api/agent/analyze",
+    response_model=AnalyzeResponse,
+    deprecated=True,
+    summary="[로컬 테스트용] score + explain 한 번에 (백은 /score + /explain 사용)",
+)
 async def agent_analyze(
     body: AnalyzeRequest,
     settings: Settings = Depends(get_settings),
 ) -> AnalyzeResponse:
     url = body.url.strip()
-    norm = _normalize_url(url)
+    norm = normalize_url(url)
+    data = await compute_middle_score(url)
 
-    ml_task = asyncio.to_thread(predict_phishing_score, url)
-    trace_task = trace_redirects(url, max_hops=5)
-    ml_score_raw, redirect_info = await asyncio.gather(ml_task, trace_task)
-
-    redirect_score, factor_dicts = calculate_redirect_score(redirect_info)
-    risk_factors = [RiskFactor(**d) for d in factor_dicts]
-
-    if ml_score_raw < 0:
-        ml_int = 50
-        ml_score_out: float | None = None
-    else:
-        ml_int = int(ml_score_raw)
-        ml_score_out = float(ml_score_raw)
-
-    total_score = min(ml_int + redirect_score, 100)
+    ml_score_out = data["ml_score"]
+    redirect_score = data["redirect_score"]
+    risk_factors = data["risk_factors"]
+    total_score = _provisional_total(ml_score_out, redirect_score)
     level, grade_ko = _level_and_grade(total_score)
 
     explain_body = ExplainRequest(
         url=url,
         normalized_url=norm,
-        final_url=str(redirect_info.get("final_url") or norm),
-        hop_count=int(redirect_info.get("hop_count") or 0),
+        final_url=data["final_url"],
+        hop_count=data["hop_count"],
         score=total_score,
         level=level,
         ml_phishing_probability_percent=ml_score_out,
@@ -89,8 +90,8 @@ async def agent_analyze(
 
     return AnalyzeResponse(
         url=url,
-        final_url=str(redirect_info.get("final_url") or norm),
-        hop_count=int(redirect_info.get("hop_count") or 0),
+        final_url=data["final_url"],
+        hop_count=data["hop_count"],
         ml_score=ml_score_out,
         total_score=total_score,
         level=level,
