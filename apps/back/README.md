@@ -22,6 +22,27 @@ docker compose up --build back
 
 백엔드는 `http://localhost:8000`에서 실행됩니다.
 
+## LLM 서버 연동 준비
+
+기본값은 LLM 연동 비활성화입니다. LLM 서버가 없어도 룰 기반 분석은 계속 동작합니다.
+
+LLM 서버를 함께 사용할 때는 백엔드 환경 변수에 아래 값을 설정합니다.
+
+```bash
+QR_SHIELD_LLM_ENABLED=true
+QR_SHIELD_LLM_BASE_URL=http://localhost:8001
+QR_SHIELD_LLM_TIMEOUT_SECONDS=3.0
+QR_SHIELD_LLM_ML_SCORE_WEIGHT=0.4
+```
+
+백엔드는 분석 시 아래 순서로 동작합니다.
+
+1. 내부 룰 엔진으로 기본 신호와 점수를 계산합니다.
+2. LLM 서버 `POST /api/agent/score`를 호출해 ML 점수와 리다이렉트 신호를 가져옵니다.
+3. `rule_score + redirect_score + ml_score * QR_SHIELD_LLM_ML_SCORE_WEIGHT`로 최종 점수를 계산합니다.
+4. LLM 서버 `POST /api/agent/explain`을 호출해 설명과 행동 가이드를 받아옵니다.
+5. LLM 호출 실패 시 기존 룰 기반 설명으로 fallback합니다.
+
 ## API
 
 ### `GET /health`

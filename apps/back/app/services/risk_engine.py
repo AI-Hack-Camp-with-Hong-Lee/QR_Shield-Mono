@@ -4,8 +4,10 @@ from datetime import UTC, datetime
 from functools import lru_cache
 from uuid import uuid4
 
+from app.core.config import settings
 from app.models.risk import RiskLevel, RiskSignal
 from app.schemas.analysis import ScanResultResponse
+from app.services.llm_client import LlmClient, LlmExplainResult, LlmRiskFactor, LlmScoreResult
 from app.services.url_parser import ParsedUrl, is_ip_address, parse_url
 
 
@@ -56,23 +58,113 @@ SENSITIVE_PARAMS = {"token", "password", "pass", "otp", "code", "session", "redi
 
 
 class RiskAnalysisService:
+    def __init__(
+        self,
+        llm_client: LlmClient | None = None,
+        ml_score_weight: float = 0.4,
+    ) -> None:
+        self._llm_client = llm_client
+        self._ml_score_weight = ml_score_weight
+
     def analyze(self, url: str) -> ScanResultResponse:
         parsed_url = parse_url(url)
-        signals = self._collect_signals(parsed_url)
-        score = min(sum(signal.score for signal in signals), 100)
+        rule_signals = self._collect_signals(parsed_url)
+        llm_score = self._score_with_llm(parsed_url)
+
+        score = self._combined_score(rule_signals, llm_score)
         risk_level = self._risk_level(score)
-        signal_labels = [signal.label for signal in signals]
+        signal_labels = self._signal_labels(rule_signals, llm_score)
+
+        llm_explain = self._explain_with_llm(
+            parsed_url=parsed_url,
+            score=score,
+            risk_level=risk_level,
+            llm_score=llm_score,
+        )
 
         return ScanResultResponse(
             id=str(uuid4()),
             url=parsed_url.normalized,
             riskLevel=risk_level.value,
             score=score,
-            explanation=self._explanation(risk_level, signal_labels),
-            actionGuide=self._action_guide(risk_level),
+            explanation=(
+                llm_explain.explanation
+                if llm_explain and llm_explain.explanation
+                else self._explanation(risk_level, signal_labels)
+            ),
+            actionGuide=(
+                "\n".join(llm_explain.action_guide)
+                if llm_explain and llm_explain.action_guide
+                else self._action_guide(risk_level)
+            ),
             signals=signal_labels,
             scannedAt=datetime.now(UTC),
         )
+
+    def _score_with_llm(self, parsed_url: ParsedUrl) -> LlmScoreResult | None:
+        if self._llm_client is None or not parsed_url.is_valid_web_url:
+            return None
+        try:
+            return self._llm_client.score(parsed_url.normalized)
+        except Exception:
+            return None
+
+    def _explain_with_llm(
+        self,
+        *,
+        parsed_url: ParsedUrl,
+        score: int,
+        risk_level: RiskLevel,
+        llm_score: LlmScoreResult | None,
+    ) -> LlmExplainResult | None:
+        if self._llm_client is None or not parsed_url.is_valid_web_url:
+            return None
+        risk_factors = llm_score.risk_factors if llm_score else []
+        try:
+            return self._llm_client.explain(
+                url=parsed_url.original,
+                normalized_url=parsed_url.normalized,
+                final_url=llm_score.final_url if llm_score else parsed_url.normalized,
+                hop_count=llm_score.hop_count if llm_score else 0,
+                score=score,
+                level=risk_level,
+                ml_score=llm_score.ml_score if llm_score else None,
+                risk_factors=risk_factors,
+            )
+        except Exception:
+            return None
+
+    def _combined_score(
+        self,
+        rule_signals: list[RiskSignal],
+        llm_score: LlmScoreResult | None,
+    ) -> int:
+        score = sum(signal.score for signal in rule_signals)
+        if llm_score is not None:
+            score += llm_score.redirect_score
+            if llm_score.ml_available and llm_score.ml_score is not None:
+                score += round(llm_score.ml_score * self._ml_score_weight)
+        return min(score, 100)
+
+    @staticmethod
+    def _signal_labels(
+        rule_signals: list[RiskSignal],
+        llm_score: LlmScoreResult | None,
+    ) -> list[str]:
+        labels = [signal.label for signal in rule_signals]
+        if llm_score is None:
+            return labels
+
+        for factor in llm_score.risk_factors:
+            if factor.description and factor.description not in labels:
+                labels.append(factor.description)
+
+        if llm_score.ml_available and llm_score.ml_score is not None and llm_score.ml_score >= 70:
+            label = f"ML 피싱 의심 점수 높음({llm_score.ml_score:.0f}%)"
+            if label not in labels:
+                labels.append(label)
+
+        return labels
 
     def _collect_signals(self, parsed_url: ParsedUrl) -> list[RiskSignal]:
         signals: list[RiskSignal] = []
@@ -172,5 +264,13 @@ class RiskAnalysisService:
 
 @lru_cache
 def get_risk_analysis_service() -> RiskAnalysisService:
-    return RiskAnalysisService()
-
+    llm_client = None
+    if settings.llm_enabled:
+        llm_client = LlmClient(
+            base_url=settings.llm_base_url,
+            timeout_seconds=settings.llm_timeout_seconds,
+        )
+    return RiskAnalysisService(
+        llm_client=llm_client,
+        ml_score_weight=settings.llm_ml_score_weight,
+    )
