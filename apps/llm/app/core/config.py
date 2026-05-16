@@ -11,6 +11,12 @@ class Settings(BaseSettings):
 
     gemini_api_key: str | None = None
     gemini_model: str = "gemini-2.5-flash-lite"
+    upstage_api_key: str | None = None
+    solar_model: str = "solar-pro2"
+    solar_temperature: float = 0.65
+    llm_timeout_seconds: float = 60.0
+    # auto | solar | gemini — auto: .env 있으면 Solar 키 우선
+    llm_provider: str = "auto"
     cors_origins: str = "*"  # 콤마로 구분. MVP에서는 * 허용, 운영 시 제한 권장
 
     @property
@@ -24,6 +30,17 @@ def get_gemini_api_key(settings: Settings) -> str | None:
     """GEMINI_API_KEY 우선, 없으면 google-genai가 쓰는 GOOGLE_API_KEY."""
     import os
 
-    if settings.gemini_api_key:
-        return settings.gemini_api_key
-    return os.environ.get("GOOGLE_API_KEY")
+    key = settings.gemini_api_key or os.environ.get("GOOGLE_API_KEY")
+    if key and str(key).strip():
+        return str(key).strip()
+    return None
+
+
+def get_upstage_api_key(settings: Settings) -> str | None:
+    """UPSTAGE_API_KEY (Upstage Console)."""
+    import os
+
+    key = settings.upstage_api_key or os.environ.get("UPSTAGE_API_KEY")
+    if key and str(key).strip():
+        return str(key).strip()
+    return None
