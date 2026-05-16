@@ -95,7 +95,7 @@ export default function ScanScreen({ navigation }: Props) {
 
       triggerSuccessFlash();
       await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      navigation.navigate('Result', { url: data });
+      navigation.getParent()?.navigate('Result', { url: data } as any);
 
       setTimeout(() => { lastScanned.current = null; }, 3000);
     },
@@ -120,7 +120,7 @@ export default function ScanScreen({ navigation }: Props) {
     if (!url) return;
     setShowUrlInput(false);
     setManualUrl('');
-    navigation.navigate('Result', { url });
+    navigation.getParent()?.navigate('Result', { url } as any);
   };
 
   // ─── 권한 미허용 ──────────────────────────────────────────────────────────────
