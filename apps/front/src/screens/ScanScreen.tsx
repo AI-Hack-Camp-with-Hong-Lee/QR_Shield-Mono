@@ -80,7 +80,7 @@ export default function ScanScreen({ navigation }: Props) {
     (url: string) => {
       setIsRouting(true);
       requestAnimationFrame(() => {
-        navigation.navigate('Result', { url });
+        navigation.navigate('Result', { url, scanId: `${Date.now()}` });
       });
     },
     [navigation],

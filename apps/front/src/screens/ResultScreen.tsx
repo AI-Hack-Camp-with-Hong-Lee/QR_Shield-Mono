@@ -331,27 +331,53 @@ export default function ResultScreen({ navigation, route }: Props) {
   const toast = useToast();
 
   const hasResult = 'result' in params;
+  const urlParam = hasResult ? undefined : (params as { url: string; scanId?: string }).url;
+  const scanId = hasResult ? undefined : (params as { url: string; scanId?: string }).scanId;
+  const routeResult = hasResult ? (params as { result: ScanResult }).result : undefined;
   const [result, setResult] = useState<ScanResult | undefined>(
-    hasResult ? (params as { result: ScanResult }).result : undefined
+    routeResult
   );
   const [loadError, setLoadError] = useState(false);
 
   useEffect(() => {
-    if (!hasResult) {
-      const url = (params as { url: string }).url;
-      analyzeUrl(url)
-        .then((r) => {
-          setResult(r);
-          addScan(r);
-          if (r.riskLevel === 'danger') {
-            Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-          } else if (r.riskLevel === 'caution') {
-            Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
-          }
-        })
-        .catch(() => setLoadError(true));
+    let isActive = true;
+    setLoadError(false);
+
+    if (routeResult) {
+      setResult(routeResult);
+      return () => {
+        isActive = false;
+      };
     }
-  }, []);
+
+    if (!urlParam) {
+      setResult(undefined);
+      setLoadError(true);
+      return () => {
+        isActive = false;
+      };
+    }
+
+    setResult(undefined);
+    analyzeUrl(urlParam)
+      .then((r) => {
+        if (!isActive) return;
+        setResult(r);
+        addScan(r);
+        if (r.riskLevel === 'danger') {
+          Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+        } else if (r.riskLevel === 'caution') {
+          Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+        }
+      })
+      .catch(() => {
+        if (isActive) setLoadError(true);
+      });
+
+    return () => {
+      isActive = false;
+    };
+  }, [addScan, routeResult, scanId, urlParam]);
 
   if (loadError) {
     return (
@@ -399,7 +425,7 @@ export default function ResultScreen({ navigation, route }: Props) {
         </TouchableOpacity>
       </View>
 
-      <ResultContent result={result} navigation={navigation} />
+      <ResultContent key={result.id} result={result} navigation={navigation} />
 
       {/* 토스트 */}
       <Animated.View

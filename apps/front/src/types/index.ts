@@ -11,7 +11,7 @@ export interface ScanResult {
   scannedAt: Date;
 }
 
-export type ResultParams = { result: ScanResult } | { url: string };
+export type ResultParams = { result: ScanResult } | { url: string; scanId?: string };
 
 export type RootStackParamList = {
   Tabs: undefined;
