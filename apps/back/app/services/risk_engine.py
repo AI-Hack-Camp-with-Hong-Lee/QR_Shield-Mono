@@ -1,15 +1,23 @@
 from __future__ import annotations
 
+import logging
 from datetime import UTC, datetime
 from functools import lru_cache
+from typing import Any
 from uuid import uuid4
 
-from app.core.config import settings
+from app.clients.llm_client import LlmClient, LlmServiceError, get_llm_client
 from app.models.risk import RiskLevel, RiskSignal
 from app.schemas.analysis import ScanResultResponse
-from app.services.llm_client import LlmClient, LlmExplainResult, LlmRiskFactor, LlmScoreResult
+from app.services.score_aggregator import (
+    combine_final_score,
+    grade_display_ko,
+    level_to_api,
+    risk_level_from_score,
+)
 from app.services.url_parser import ParsedUrl, is_ip_address, parse_url
 
+logger = logging.getLogger(__name__)
 
 SHORTENER_DOMAINS = {
     "bit.ly",
@@ -58,113 +66,110 @@ SENSITIVE_PARAMS = {"token", "password", "pass", "otp", "code", "session", "redi
 
 
 class RiskAnalysisService:
-    def __init__(
-        self,
-        llm_client: LlmClient | None = None,
-        ml_score_weight: float = 0.4,
-    ) -> None:
-        self._llm_client = llm_client
-        self._ml_score_weight = ml_score_weight
+    def __init__(self, llm_client: LlmClient | None = None) -> None:
+        self._llm = llm_client or get_llm_client()
 
-    def analyze(self, url: str) -> ScanResultResponse:
+    async def analyze(self, url: str) -> ScanResultResponse:
         parsed_url = parse_url(url)
-        rule_signals = self._collect_signals(parsed_url)
-        llm_score = self._score_with_llm(parsed_url)
+        signals = self._collect_signals(parsed_url)
+        rule_score = min(sum(signal.score for signal in signals), 100)
+        signal_labels = [signal.label for signal in signals]
 
-        score = self._combined_score(rule_signals, llm_score)
-        risk_level = self._risk_level(score)
-        signal_labels = self._signal_labels(rule_signals, llm_score)
+        middle: dict[str, Any] | None = None
+        if parsed_url.is_valid_web_url and self._llm.enabled:
+            try:
+                middle = await self._llm.fetch_score(parsed_url.normalized)
+            except Exception as exc:
+                logger.warning("LLM score call failed: %s", exc)
 
-        llm_explain = self._explain_with_llm(
-            parsed_url=parsed_url,
-            score=score,
-            risk_level=risk_level,
-            llm_score=llm_score,
-        )
+        if middle:
+            final_score = combine_final_score(
+                rule_score,
+                middle.get("ml_score"),
+                bool(middle.get("ml_available")),
+                int(middle.get("redirect_score") or 0),
+            )
+            risk_level = risk_level_from_score(final_score)
+            llm_factors = middle.get("risk_factors") or []
+            merged_signals = _merge_signal_labels(signal_labels, llm_factors)
+            explanation, action_guide = await self._explain_with_llm(
+                parsed_url=parsed_url,
+                middle=middle,
+                final_score=final_score,
+                risk_level=risk_level,
+                rule_labels=signal_labels,
+                rule_factors=_rule_risk_factors(signals),
+                llm_factors=llm_factors,
+            )
+            return ScanResultResponse(
+                id=str(uuid4()),
+                url=parsed_url.normalized,
+                riskLevel=level_to_api(risk_level),
+                score=final_score,
+                explanation=explanation,
+                actionGuide=action_guide,
+                signals=merged_signals,
+                scannedAt=datetime.now(UTC),
+            )
 
+        risk_level = risk_level_from_score(rule_score)
         return ScanResultResponse(
             id=str(uuid4()),
             url=parsed_url.normalized,
-            riskLevel=risk_level.value,
-            score=score,
-            explanation=(
-                llm_explain.explanation
-                if llm_explain and llm_explain.explanation
-                else self._explanation(risk_level, signal_labels)
-            ),
-            actionGuide=(
-                "\n".join(llm_explain.action_guide)
-                if llm_explain and llm_explain.action_guide
-                else self._action_guide(risk_level)
-            ),
+            riskLevel=level_to_api(risk_level),
+            score=rule_score,
+            explanation=self._explanation(risk_level, signal_labels),
+            actionGuide=self._action_guide(risk_level),
             signals=signal_labels,
             scannedAt=datetime.now(UTC),
         )
 
-    def _score_with_llm(self, parsed_url: ParsedUrl) -> LlmScoreResult | None:
-        if self._llm_client is None or not parsed_url.is_valid_web_url:
-            return None
-        try:
-            return self._llm_client.score(parsed_url.normalized)
-        except Exception:
-            return None
-
-    def _explain_with_llm(
+    async def _explain_with_llm(
         self,
         *,
         parsed_url: ParsedUrl,
-        score: int,
+        middle: dict[str, Any],
+        final_score: int,
         risk_level: RiskLevel,
-        llm_score: LlmScoreResult | None,
-    ) -> LlmExplainResult | None:
-        if self._llm_client is None or not parsed_url.is_valid_web_url:
-            return None
-        risk_factors = llm_score.risk_factors if llm_score else []
+        rule_labels: list[str],
+        rule_factors: list[dict[str, Any]],
+        llm_factors: list[dict[str, Any]],
+    ) -> tuple[str, str]:
+        combined_factors = [*llm_factors, *rule_factors]
+        payload = {
+            "url": middle.get("url") or parsed_url.normalized,
+            "normalized_url": parsed_url.normalized,
+            "final_url": middle.get("final_url"),
+            "hop_count": middle.get("hop_count"),
+            "score": final_score,
+            "level": level_to_api(risk_level),
+            "ml_phishing_probability_percent": middle.get("ml_score"),
+            "risk_factors": combined_factors,
+            "grade_display": grade_display_ko(risk_level),
+        }
         try:
-            return self._llm_client.explain(
-                url=parsed_url.original,
-                normalized_url=parsed_url.normalized,
-                final_url=llm_score.final_url if llm_score else parsed_url.normalized,
-                hop_count=llm_score.hop_count if llm_score else 0,
-                score=score,
-                level=risk_level,
-                ml_score=llm_score.ml_score if llm_score else None,
-                risk_factors=risk_factors,
+            result = await self._llm.fetch_explain(payload)
+            explanation = str(result.get("explanation", "")).strip()
+            guides = result.get("action_guide") or []
+            if isinstance(guides, str):
+                guides = [guides]
+            action_guide = "\n".join(
+                str(item).strip() for item in guides if str(item).strip()
             )
-        except Exception:
-            return None
+            if explanation and action_guide:
+                return explanation, action_guide
+        except (LlmServiceError, Exception) as exc:
+            logger.warning("LLM explain call failed: %s", exc)
 
-    def _combined_score(
-        self,
-        rule_signals: list[RiskSignal],
-        llm_score: LlmScoreResult | None,
-    ) -> int:
-        score = sum(signal.score for signal in rule_signals)
-        if llm_score is not None:
-            score += llm_score.redirect_score
-            if llm_score.ml_available and llm_score.ml_score is not None:
-                score += round(llm_score.ml_score * self._ml_score_weight)
-        return min(score, 100)
-
-    @staticmethod
-    def _signal_labels(
-        rule_signals: list[RiskSignal],
-        llm_score: LlmScoreResult | None,
-    ) -> list[str]:
-        labels = [signal.label for signal in rule_signals]
-        if llm_score is None:
-            return labels
-
-        for factor in llm_score.risk_factors:
-            if factor.description and factor.description not in labels:
-                labels.append(factor.description)
-
-        if llm_score.ml_available and llm_score.ml_score is not None and llm_score.ml_score >= 70:
-            label = f"ML 피싱 의심 점수 높음({llm_score.ml_score:.0f}%)"
-            if label not in labels:
-                labels.append(label)
-
-        return labels
+        factor_labels = [
+            str(f.get("description", "")).strip()
+            for f in combined_factors
+            if f.get("description")
+        ]
+        return (
+            self._explanation(risk_level, factor_labels or rule_labels),
+            self._action_guide(risk_level),
+        )
 
     def _collect_signals(self, parsed_url: ParsedUrl) -> list[RiskSignal]:
         signals: list[RiskSignal] = []
@@ -227,18 +232,10 @@ class RiskAnalysisService:
         return signals
 
     @staticmethod
-    def _risk_level(score: int) -> RiskLevel:
-        if score >= 70:
-            return RiskLevel.DANGER
-        if score >= 35:
-            return RiskLevel.CAUTION
-        return RiskLevel.SAFE
-
-    @staticmethod
     def _explanation(risk_level: RiskLevel, signals: list[str]) -> str:
         if risk_level is RiskLevel.DANGER:
             return (
-                "이 URL은 룰 기반 검사에서 높은 위험 신호가 다수 감지되었습니다. "
+                "이 URL은 자동 검사에서 높은 위험 신호가 다수 감지되었습니다. "
                 f"주요 신호는 {', '.join(signals)}입니다."
             )
         if risk_level is RiskLevel.CAUTION:
@@ -251,7 +248,7 @@ class RiskAnalysisService:
                 "이 URL은 낮은 수준의 주의 신호가 있으나 전체 위험도는 낮게 평가되었습니다. "
                 f"확인된 신호는 {', '.join(signals)}입니다."
             )
-        return "이 URL은 현재 룰 기반 검사에서 뚜렷한 위험 신호가 감지되지 않았습니다."
+        return "이 URL은 현재 자동 검사에서 뚜렷한 위험 신호가 감지되지 않았습니다."
 
     @staticmethod
     def _action_guide(risk_level: RiskLevel) -> str:
@@ -262,15 +259,31 @@ class RiskAnalysisService:
         return "공식 출처에서 받은 QR 코드라면 접속해도 됩니다. 그래도 개인정보 입력 전 주소를 한 번 더 확인하세요."
 
 
+def _rule_risk_factors(signals: list[RiskSignal]) -> list[dict[str, Any]]:
+    return [
+        {
+            "type": "rule",
+            "description": signal.label,
+            "score": signal.score,
+        }
+        for signal in signals
+    ]
+
+
+def _merge_signal_labels(
+    rule_labels: list[str],
+    llm_factors: list[dict[str, Any]],
+) -> list[str]:
+    merged = list(rule_labels)
+    seen = set(rule_labels)
+    for factor in llm_factors:
+        description = str(factor.get("description", "")).strip()
+        if description and description not in seen:
+            merged.append(description)
+            seen.add(description)
+    return merged
+
+
 @lru_cache
 def get_risk_analysis_service() -> RiskAnalysisService:
-    llm_client = None
-    if settings.llm_enabled:
-        llm_client = LlmClient(
-            base_url=settings.llm_base_url,
-            timeout_seconds=settings.llm_timeout_seconds,
-        )
-    return RiskAnalysisService(
-        llm_client=llm_client,
-        ml_score_weight=settings.llm_ml_score_weight,
-    )
+    return RiskAnalysisService()

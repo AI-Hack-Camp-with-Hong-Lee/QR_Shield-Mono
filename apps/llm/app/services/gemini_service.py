@@ -9,6 +9,7 @@ from google import genai
 
 from app.core.config import Settings, get_gemini_api_key
 from app.prompts.explain import EXPLAIN_SYSTEM, build_user_prompt
+from app.prompts.safety import build_safety_prompt
 from app.schemas.explain import ExplainRequest, ExplainResponse
 
 
@@ -23,6 +24,32 @@ def _strip_json_fence(raw: str) -> str:
 
 def _parse_llm_json(text: str) -> dict[str, Any]:
     return json.loads(_strip_json_fence(text))
+
+
+def _apply_safety_review(
+    client: genai.Client,
+    model_name: str,
+    draft: dict[str, Any],
+) -> dict[str, Any]:
+    try:
+        response = client.models.generate_content(
+            model=model_name,
+            contents=build_safety_prompt(draft),
+        )
+        raw = getattr(response, "text", None) or ""
+        reviewed = _parse_llm_json(raw)
+        explanation = str(reviewed.get("explanation", "")).strip()
+        guides_raw = reviewed.get("action_guide", [])
+        action_guide = (
+            [guides_raw.strip()]
+            if isinstance(guides_raw, str)
+            else [str(x).strip() for x in guides_raw if str(x).strip()]
+        )
+        if explanation and action_guide:
+            return {"explanation": explanation, "action_guide": action_guide}
+    except Exception:
+        pass
+    return draft
 
 
 def _fallback_response(req: ExplainRequest) -> tuple[str, list[str]]:
@@ -109,6 +136,14 @@ def explain_with_gemini(
 
         if not action_guide:
             _, action_guide = _fallback_response(req)
+
+        reviewed = _apply_safety_review(
+            client,
+            model_name,
+            {"explanation": explanation, "action_guide": action_guide},
+        )
+        explanation = str(reviewed.get("explanation", explanation)).strip()
+        action_guide = reviewed.get("action_guide", action_guide)
 
         return ExplainResponse(
             explanation=explanation,

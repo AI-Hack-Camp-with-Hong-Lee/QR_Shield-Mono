@@ -15,7 +15,7 @@ LLM·ML 서버는 **URL 기반 피싱 추정(ONNX)**, **HEAD 리다이렉트 분
 
 **최종 위험 점수·등급(안전/주의/위험)은 백엔드 책임**이며, LLM 서버는 **중간 분석 결과(`score`)**와 **설명 생성(`explain`)**만 제공한다.
 
-**앱 End-to-End(스캔 → 결과 화면)** 는 백의 LLM 연동 및 프론트 API 연동 완료 후 가능하다. 현재 백·프론트는 LLM 서버를 호출하지 않는다.
+**앱 End-to-End(스캔 → 결과 화면)** 는 백·프론트 연동 코드가 반영되었다. 해커톤 시 **LLM(8001)·백(8000) 동시 가동** 및 `EXPO_PUBLIC_API_URL` 설정이 필요하다.
 
 ---
 
@@ -37,7 +37,7 @@ LLM·ML 서버는 **URL 기반 피싱 추정(ONNX)**, **HEAD 리다이렉트 분
 | 구분 | 담당 | 비고 |
 |------|------|------|
 | QR 스캔·UI | 프론트 | 현재 mock 분석 → 백 연동 필요 |
-| 규칙·최종 점수 | 백 | LLM 미연동 상태 |
+| 규칙·최종 점수·LLM 호출 | 백 | `score`→합산→`explain` 구현 |
 | ML·리다이렉트·설명 API | LLM (`apps/llm`) | 구현 완료 |
 
 ---
@@ -83,7 +83,7 @@ LLM·ML 서버는 **URL 기반 피싱 추정(ONNX)**, **HEAD 리다이렉트 분
 
 | 문서 | 경로 |
 |------|------|
-| 백엔드 연동 상세 | `apps/llm/BACKEND_HANDOFF.md` |
+| 백엔드 연동·curl·시연 URL | `apps/llm/BACKEND_HANDOFF.md` |
 | 소스 | `main` 브랜치에 `apps/llm` 포함 (머지 완료) |
 
 ### 3.6 로컬 실행
@@ -104,11 +104,11 @@ python -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8001
 
 | 항목 | 상태 | 담당 |
 |------|------|------|
-| 백 → LLM `score` / `explain` 호출 | ❌ 미구현 | 백 |
-| 백 최종 점수·등급 합산 | ❌ 미구현 | 백 |
-| 프론트 → 백 `/analyze` (mock 제거) | ❌ mock 사용 중 | 프론트 |
-| 앱 E2E 시연 | ❌ 위 항목 후 | 공동 |
-| Docker Compose에 LLM 서비스 | ❌ back만 정의 | 인프라(선택) |
+| 백 → LLM `score` / `explain` 호출 | ✅ 구현 | `apps/back` |
+| 백 최종 점수·등급 합산 | ✅ 구현 | `score_aggregator.py` |
+| 프론트 → 백 `/analyze` (mock 제거) | ✅ 구현 | `EXPO_PUBLIC_API_URL` |
+| 앱 E2E 시연 | ⚠️ 3서버 가동 후 검증 | 공동 |
+| Docker Compose / LLM 컨테이너 | ❌ | **백·인프라 담당** (LLM은 로컬 `8001` 권장) |
 
 ---
 
@@ -127,7 +127,7 @@ python -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8001
 
 | # | 항목 | 우선순위 | 비고 |
 |---|------|----------|------|
-| 1 | 백 연동 E2E 검증 | **필수** | 백이 `score`→합산→`explain` 구현 후 |
+| 1 | 백 연동 E2E 검증 | **필수** | 3서버 동시 실행 후 curl/앱 확인 |
 | 2 | 팀 공유용 **고정 LLM Base URL** | **필수** | 동일 Wi-Fi IP 또는 ngrok |
 | 3 | 시연 URL 3종 리허설 | **필수** | 안전 / 단축·리다이렉트 / 고위험 |
 | 4 | 백 합의 스키마 ↔ 코드 필드명 일치 | **필수** | 불일치 시 `schemas/score.py` 수정 |
@@ -151,26 +151,26 @@ python -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8001
 | # | 작업 | 완료 기준 |
 |---|------|-----------|
 | A1 | LLM 서버 상시 가동 (`0.0.0.0:8001`) | 팀원 curl `/api/health` 성공 |
-| A2 | 팀 채팅에 **Base URL** 공지 | Wi-Fi IP 또는 ngrok |
-| A3 | `BACKEND_HANDOFF.md` 공유 | 백 확인 |
-| A4 | 백 연동 지원 (필드·타임아웃·오류) | `POST 백/analyze` 1건 성공 |
-| A5 | 시연 URL 3종 테스트·스크린샷 | 발표 백업 |
+| A2 | 팀 채팅에 **Base URL** 공지 | Wi-Fi IP 또는 ngrok (운영) |
+| A3 | `BACKEND_HANDOFF.md` 공유 | ✅ 문서 작성 |
+| A4 | 백 연동 지원 (필드·타임아웃·오류) | ✅ 백 코드 반영 |
+| A5 | 시연 URL 3종 테스트·스크린샷 | `BACKEND_HANDOFF.md` 시연 URL 절 |
 
 ### Phase B — MVP 품질 (시간 있을 때)
 
 | # | 작업 | 완료 기준 |
 |---|------|-----------|
-| B1 | `explain` 3 URL 수동 검수 | 설명이 `risk_factors`/ML 반영 |
-| B2 | 합의 스키마와 OpenAPI(`/docs`) 일치 확인 | 백 리뷰 OK |
-| B3 | (선택) `QUICKSTART` curl 백엔드용 3줄 | 백 자가 테스트 |
+| B1 | `explain` 3 URL 수동 검수 | `BACKEND_HANDOFF.md` 시연 URL로 Swagger 검수 |
+| B2 | 합의 스키마와 OpenAPI(`/docs`) 일치 확인 | `BACKEND_HANDOFF.md` |
+| B3 | (선택) curl 백엔드용 | ✅ `BACKEND_HANDOFF.md` |
 
 ### Phase C — 선택 (시간 남을 때)
 
 | # | 작업 |
 |---|------|
-| C1 | explain Safety 2단계 |
-| C2 | Docker `llm` 서비스 compose 추가 |
-| C3 | 단위 테스트 (`middle_score`, redirect) |
+| C1 | explain Safety 2단계 | ✅ `prompts/safety.py` |
+| C2 | Docker `llm` 서비스 compose 추가 | 백·인프라 담당 (LLM Dockerfile 없음) |
+| C3 | 단위 테스트 (`middle_score`, redirect) | ✅ `apps/llm/tests/` |
 
 ---
 

@@ -3,87 +3,31 @@ from app.services.llm_client import LlmExplainResult, LlmRiskFactor, LlmScoreRes
 from app.services.risk_engine import RiskAnalysisService
 
 
-class FakeLlmClient:
-    def score(self, url: str) -> LlmScoreResult:
-        return LlmScoreResult(
-            final_url=url,
-            hop_count=1,
-            ml_score=80.0,
-            ml_available=True,
-            redirect_score=10,
-            risk_factors=[
-                LlmRiskFactor(
-                    type="redirect",
-                    description="주소가 1회 다른 곳으로 연결(리다이렉트)되었습니다.",
-                    score=10,
-                )
-            ],
-        )
-
-    def explain(
-        self,
-        *,
-        url: str,
-        normalized_url: str,
-        final_url: str,
-        hop_count: int,
-        score: int,
-        level: RiskLevel,
-        ml_score: float | None,
-        risk_factors: list[LlmRiskFactor],
-    ) -> LlmExplainResult:
-        return LlmExplainResult(
-            explanation=f"LLM explanation for {level.value} {score}",
-            action_guide=["공식 앱에서 확인하세요.", "개인정보 입력을 피하세요."],
-            used_llm=True,
-            model="fake",
-        )
-
-
-class FailingLlmClient:
-    def score(self, url: str) -> LlmScoreResult:
-        raise RuntimeError("llm score unavailable")
-
-    def explain(
-        self,
-        *,
-        url: str,
-        normalized_url: str,
-        final_url: str,
-        hop_count: int,
-        score: int,
-        level: RiskLevel,
-        ml_score: float | None,
-        risk_factors: list[LlmRiskFactor],
-    ) -> LlmExplainResult:
-        raise RuntimeError("llm explain unavailable")
-
-
-def test_safe_url_has_safe_risk_level():
-    result = RiskAnalysisService().analyze("https://example.com")
+async def test_safe_url_has_safe_risk_level():
+    result = await RiskAnalysisService().analyze("https://example.com")
 
     assert result.risk_level == "safe"
     assert result.score == 0
     assert result.signals == []
 
 
-def test_url_without_scheme_is_normalized_to_https():
-    result = RiskAnalysisService().analyze("example.com/path?utm=qr")
+async def test_url_without_scheme_is_normalized_to_https():
+    result = await RiskAnalysisService().analyze("example.com/path?utm=qr")
 
     assert result.url == "https://example.com/path?utm=qr"
     assert result.risk_level == "safe"
 
 
-def test_shortener_login_url_is_caution():
-    result = RiskAnalysisService().analyze("https://bit.ly/login-verify")
+async def test_shortener_login_url_is_caution():
+    result = await RiskAnalysisService().analyze("https://bit.ly/login-verify")
 
     assert result.risk_level == "caution"
     assert "단축 URL 사용" in result.signals
     assert "계정/결제 관련 의심 키워드 포함" in result.signals
 
 
-def test_high_risk_ip_url_is_danger():
-    result = RiskAnalysisService().analyze("http://192.168.0.1/phishing?token=abc")
+async def test_high_risk_ip_url_is_danger():
+    result = await RiskAnalysisService().analyze("http://192.168.0.1/phishing?token=abc")
 
     assert result.risk_level == "danger"
     assert "HTTPS가 아닌 HTTP 사용" in result.signals
@@ -92,8 +36,8 @@ def test_high_risk_ip_url_is_danger():
     assert "민감한 파라미터 포함" in result.signals
 
 
-def test_non_web_qr_payload_is_danger():
-    result = RiskAnalysisService().analyze("WIFI:T:WPA;S:test;P:password;;")
+async def test_non_web_qr_payload_is_danger():
+    result = await RiskAnalysisService().analyze("WIFI:T:WPA;S:test;P:password;;")
 
     assert result.risk_level == "danger"
     assert result.score == 85
