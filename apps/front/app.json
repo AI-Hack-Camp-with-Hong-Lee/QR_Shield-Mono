@@ -1,0 +1,28 @@
+{
+  "expo": {
+    "name": "QR Shield",
+    "slug": "qr-shield",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "light",
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "com.qrshield.app",
+      "infoPlist": {
+        "NSCameraUsageDescription": "QR 코드를 스캔하기 위해 카메라 접근이 필요합니다."
+      }
+    },
+    "android": {
+      "package": "com.qrshield.app",
+      "permissions": ["android.permission.CAMERA"]
+    },
+    "plugins": [
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "QR 코드를 스캔하기 위해 카메라 접근이 필요합니다."
+        }
+      ]
+    ]
+  }
+}
