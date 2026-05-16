@@ -5,6 +5,9 @@ services:
       dockerfile: Dockerfile
     image: qr-shield-back:local
     container_name: qr-shield-back
+    environment:
+      QR_SHIELD_LLM_ENABLED: "false"
+      QR_SHIELD_LLM_BASE_URL: "http://llm:8001"
     ports:
       - "8000:8000"
     healthcheck:
