@@ -18,6 +18,7 @@ import {
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { useIsFocused } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { RootStackParamList } from '../types';
 
@@ -34,6 +35,7 @@ const OVERLAY = 'rgba(2,6,23,0.72)';
 
 export default function ScanScreen({ navigation }: Props) {
   const [permission, requestPermission] = useCameraPermissions();
+  const isFocused = useIsFocused();
   const [torch, setTorch] = useState(false);
   const [showUrlInput, setShowUrlInput] = useState(false);
   const [manualUrl, setManualUrl] = useState('');
@@ -43,6 +45,10 @@ export default function ScanScreen({ navigation }: Props) {
   const cornerOpacity = useRef(new Animated.Value(1)).current;
   const successFlash = useRef(new Animated.Value(0)).current;
   const cornerColorAnim = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    if (isFocused) lastScanned.current = null;
+  }, [isFocused]);
 
   useEffect(() => {
     const sweepLoop = Animated.loop(
@@ -149,13 +155,15 @@ export default function ScanScreen({ navigation }: Props) {
 
   return (
     <View style={styles.container}>
-      <CameraView
-        style={StyleSheet.absoluteFillObject}
-        facing="back"
-        enableTorch={torch}
-        onBarcodeScanned={handleBarCodeScanned}
-        barcodeScannerSettings={{ barcodeTypes: ['qr'] }}
-      />
+      {isFocused && (
+        <CameraView
+          style={StyleSheet.absoluteFillObject}
+          facing="back"
+          enableTorch={torch}
+          onBarcodeScanned={handleBarCodeScanned}
+          barcodeScannerSettings={{ barcodeTypes: ['qr'] }}
+        />
+      )}
 
       <View style={styles.overlay}>
         <View style={styles.darkenFull} />
