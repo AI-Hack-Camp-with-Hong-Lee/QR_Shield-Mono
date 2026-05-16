@@ -8,9 +8,9 @@ router = APIRouter()
 
 
 @router.post("/analyze", response_model=ScanResultResponse)
-def analyze_url(
+async def analyze_url(
     payload: AnalyzeUrlRequest,
     service: RiskAnalysisService = Depends(get_risk_analysis_service),
 ) -> ScanResultResponse:
-    return service.analyze(payload.url)
+    return await service.analyze(payload.url)
 

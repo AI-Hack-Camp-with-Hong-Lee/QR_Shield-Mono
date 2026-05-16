@@ -18,9 +18,9 @@ def test_health_check():
     assert health_check() == {"status": "ok"}
 
 
-def test_analyze_response_matches_front_contract():
+async def test_analyze_response_matches_front_contract():
     payload = AnalyzeUrlRequest(url="https://example.com")
-    result = analyze_url(payload, RiskAnalysisService())
+    result = await analyze_url(payload, RiskAnalysisService())
     body = result.model_dump(by_alias=True)
 
     assert set(body) == {
