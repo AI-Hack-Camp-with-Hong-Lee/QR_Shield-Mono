@@ -1,3 +1,4 @@
+import { NativeModules, Platform } from 'react-native';
 import type { RiskLevel, ScanResult } from '../types';
 
 const MOCK_RESPONSES: Record<RiskLevel, Omit<ScanResult, 'id' | 'url' | 'scannedAt'>> = {
@@ -35,7 +36,7 @@ function classifyUrl(url: string): RiskLevel {
   return 'safe';
 }
 
-export async function analyzeUrl(url: string): Promise<ScanResult> {
+async function mockAnalyzeUrl(url: string): Promise<ScanResult> {
   await new Promise((r) => setTimeout(r, 1500));
 
   const riskLevel = classifyUrl(url);
@@ -47,4 +48,49 @@ export async function analyzeUrl(url: string): Promise<ScanResult> {
     scannedAt: new Date(),
     ...mock,
   };
+}
+
+function getExpoHost(): string | undefined {
+  const scriptURL = NativeModules.SourceCode?.scriptURL as string | undefined;
+  const match = scriptURL?.match(/^(?:https?|exp):\/\/([^/:]+)/);
+  return match?.[1];
+}
+
+function getApiBaseUrl(): string {
+  const configured = process.env.EXPO_PUBLIC_API_BASE_URL?.trim();
+  if (configured) return configured.replace(/\/$/, '');
+
+  const expoHost = getExpoHost();
+  if (expoHost) return `http://${expoHost}:8000`;
+
+  if (Platform.OS === 'android') return 'http://10.0.2.2:8000';
+  return 'http://localhost:8000';
+}
+
+function toScanResult(data: Omit<ScanResult, 'scannedAt'> & { scannedAt: string | Date }): ScanResult {
+  return {
+    ...data,
+    scannedAt: new Date(data.scannedAt),
+  };
+}
+
+export async function analyzeUrl(url: string): Promise<ScanResult> {
+  if (process.env.EXPO_PUBLIC_USE_MOCK_API === 'true') {
+    return mockAnalyzeUrl(url);
+  }
+
+  const response = await fetch(`${getApiBaseUrl()}/api/v1/analyze`, {
+    method: 'POST',
+    headers: {
+      Accept: 'application/json',
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ url }),
+  });
+
+  if (!response.ok) {
+    throw new Error(`Analyze request failed: ${response.status}`);
+  }
+
+  return toScanResult(await response.json());
 }

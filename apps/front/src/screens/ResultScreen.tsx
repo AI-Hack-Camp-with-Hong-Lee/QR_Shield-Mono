@@ -15,17 +15,17 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Svg, { Circle } from 'react-native-svg';
-import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
+import type { BottomTabNavigationProp } from '@react-navigation/bottom-tabs';
 import type { RouteProp } from '@react-navigation/native';
 import { analyzeUrl } from '../services/api';
 import { useStore } from '../store/useStore';
-import type { RootStackParamList, ScanResult } from '../types';
+import type { ScanResult, TabParamList } from '../types';
 import { RISK_CONFIG } from '../utils/riskConfig';
 import { useTheme } from '../utils/theme';
 
 type Props = {
-  navigation: NativeStackNavigationProp<RootStackParamList, 'Result'>;
-  route: RouteProp<RootStackParamList, 'Result'>;
+  navigation: BottomTabNavigationProp<TabParamList, 'Result'>;
+  route: RouteProp<TabParamList, 'Result'>;
 };
 
 // ─── Toast ───────────────────────────────────────────────────────────────────

@@ -23,6 +23,11 @@ const TAB_META: Record<string, { label: string; icon: string; iconActive: string
 function FloatingTabBar({ state, navigation }: BottomTabBarProps) {
   const { colors } = useTheme();
   const insets = useSafeAreaInsets();
+  const currentRoute = state.routes[state.index];
+
+  if (currentRoute?.name === 'Result') {
+    return null;
+  }
 
   return (
     <View style={[ftb.outer, { bottom: Math.max(20, insets.bottom + 8) }]}>
@@ -36,8 +41,8 @@ function FloatingTabBar({ state, navigation }: BottomTabBarProps) {
           },
         ]}
       >
-        {state.routes.map((route, index) => {
-          const focused = state.index === index;
+        {state.routes.filter((route) => route.name !== 'Result').map((route) => {
+          const focused = currentRoute?.key === route.key;
           const meta = TAB_META[route.name] ?? { label: route.name, icon: 'ellipse-outline', iconActive: 'ellipse' };
           const color = focused ? '#3B82F6' : colors.textMuted;
 
@@ -130,6 +135,7 @@ function TabNavigator() {
     >
       <Tab.Screen name="Scan" component={ScanScreen} />
       <Tab.Screen name="History" component={HistoryScreen} />
+      <Tab.Screen name="Result" component={ResultScreen} />
     </Tab.Navigator>
   );
 }
@@ -140,11 +146,6 @@ export default function RootNavigator() {
   return (
     <Stack.Navigator screenOptions={{ headerShown: false }}>
       <Stack.Screen name="Tabs" component={TabNavigator} />
-      <Stack.Screen
-        name="Result"
-        component={ResultScreen}
-        options={{ presentation: 'modal', animation: 'slide_from_bottom' }}
-      />
     </Stack.Navigator>
   );
 }

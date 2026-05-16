@@ -1,5 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
-import { CameraView, useCameraPermissions } from 'expo-camera';
+import { CameraView, scanFromURLAsync, useCameraPermissions } from 'expo-camera';
+import type { BarcodeScanningResult } from 'expo-camera';
 import * as Haptics from 'expo-haptics';
 import * as ImagePicker from 'expo-image-picker';
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -19,11 +20,11 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useIsFocused } from '@react-navigation/native';
-import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
-import type { RootStackParamList } from '../types';
+import type { BottomTabNavigationProp } from '@react-navigation/bottom-tabs';
+import type { TabParamList } from '../types';
 
 type Props = {
-  navigation: NativeStackNavigationProp<RootStackParamList, 'Tabs'>;
+  navigation: BottomTabNavigationProp<TabParamList, 'Scan'>;
 };
 
 const SCAN_SIZE = 264;
@@ -39,6 +40,7 @@ export default function ScanScreen({ navigation }: Props) {
   const [torch, setTorch] = useState(false);
   const [showUrlInput, setShowUrlInput] = useState(false);
   const [manualUrl, setManualUrl] = useState('');
+  const [isRouting, setIsRouting] = useState(false);
   const lastScanned = useRef<string | null>(null);
 
   const scanAnim = useRef(new Animated.Value(0)).current;
@@ -47,7 +49,10 @@ export default function ScanScreen({ navigation }: Props) {
   const cornerColorAnim = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
-    if (isFocused) lastScanned.current = null;
+    if (isFocused) {
+      lastScanned.current = null;
+      setIsRouting(false);
+    }
   }, [isFocused]);
 
   useEffect(() => {
@@ -59,8 +64,8 @@ export default function ScanScreen({ navigation }: Props) {
     );
     const blink = Animated.loop(
       Animated.sequence([
-        Animated.timing(cornerOpacity, { toValue: 0.55, duration: 900, useNativeDriver: true }),
-        Animated.timing(cornerOpacity, { toValue: 1, duration: 900, useNativeDriver: true }),
+        Animated.timing(cornerOpacity, { toValue: 0.55, duration: 900, useNativeDriver: false }),
+        Animated.timing(cornerOpacity, { toValue: 1, duration: 900, useNativeDriver: false }),
       ])
     );
     sweepLoop.start();
@@ -70,6 +75,30 @@ export default function ScanScreen({ navigation }: Props) {
 
   const scanLineY = scanAnim.interpolate({ inputRange: [0, 1], outputRange: [1, SCAN_SIZE - 3] });
   const cornerBorderColor = cornerColorAnim.interpolate({ inputRange: [0, 1], outputRange: [ACCENT, SUCCESS] });
+
+  const openResult = useCallback(
+    (url: string) => {
+      setIsRouting(true);
+      requestAnimationFrame(() => {
+        navigation.navigate('Result', { url });
+      });
+    },
+    [navigation],
+  );
+
+  const handleDetectedPayload = useCallback(
+    (payload: string) => {
+      const url = payload.trim();
+      if (!url) {
+        Alert.alert('QR 인식 실패', 'QR 코드에서 읽을 수 있는 내용이 없습니다.');
+        return;
+      }
+
+      openResult(url);
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => undefined);
+    },
+    [openResult],
+  );
 
   const triggerSuccessFlash = () => {
     successFlash.setValue(0);
@@ -89,17 +118,16 @@ export default function ScanScreen({ navigation }: Props) {
 
   // QR 인식 → 즉시 ResultScreen으로 이동 (API 호출은 ResultScreen에서)
   const handleBarCodeScanned = useCallback(
-    async ({ data }: { data: string }) => {
+    ({ data }: BarcodeScanningResult) => {
       if (data === lastScanned.current) return;
       lastScanned.current = data;
 
       triggerSuccessFlash();
-      await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      navigation.getParent()?.navigate('Result', { url: data } as any);
+      handleDetectedPayload(data);
 
       setTimeout(() => { lastScanned.current = null; }, 3000);
     },
-    [navigation],
+    [handleDetectedPayload],
   );
 
   const handleGallery = async () => {
@@ -112,7 +140,22 @@ export default function ScanScreen({ navigation }: Props) {
       return;
     }
     const picked = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], quality: 1 });
-    if (!picked.canceled) setShowUrlInput(true);
+    if (picked.canceled) return;
+
+    try {
+      const results = await scanFromURLAsync(picked.assets[0].uri, ['qr']);
+      const payload = results[0]?.data;
+
+      if (!payload) {
+        Alert.alert('QR 인식 실패', '선택한 이미지에서 QR 코드를 찾지 못했습니다.');
+        return;
+      }
+
+      triggerSuccessFlash();
+      handleDetectedPayload(payload);
+    } catch {
+      Alert.alert('QR 인식 실패', '이미지에서 QR 코드를 읽는 중 문제가 발생했습니다.');
+    }
   };
 
   const handleManualAnalyze = () => {
@@ -120,7 +163,7 @@ export default function ScanScreen({ navigation }: Props) {
     if (!url) return;
     setShowUrlInput(false);
     setManualUrl('');
-    navigation.getParent()?.navigate('Result', { url } as any);
+    openResult(url);
   };
 
   // ─── 권한 미허용 ──────────────────────────────────────────────────────────────
@@ -159,8 +202,9 @@ export default function ScanScreen({ navigation }: Props) {
         <CameraView
           style={StyleSheet.absoluteFillObject}
           facing="back"
+          active={!isRouting}
           enableTorch={torch}
-          onBarcodeScanned={handleBarCodeScanned}
+          onBarcodeScanned={isRouting ? undefined : handleBarCodeScanned}
           barcodeScannerSettings={{ barcodeTypes: ['qr'] }}
         />
       )}
