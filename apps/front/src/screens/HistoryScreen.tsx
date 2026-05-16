@@ -12,15 +12,15 @@ import {
   useWindowDimensions,
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
-import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
+import type { BottomTabNavigationProp } from '@react-navigation/bottom-tabs';
 import { RiskBadge } from '../components/RiskBadge';
 import { useStore } from '../store/useStore';
-import type { RootStackParamList, RiskLevel, ScanResult } from '../types';
+import type { RiskLevel, ScanResult, TabParamList } from '../types';
 import { RISK_CONFIG } from '../utils/riskConfig';
 import { useTheme } from '../utils/theme';
 
 type Props = {
-  navigation: NativeStackNavigationProp<RootStackParamList, 'Tabs'>;
+  navigation: BottomTabNavigationProp<TabParamList, 'History'>;
 };
 
 // ─── 탭 설정 ─────────────────────────────────────────────────────────────────

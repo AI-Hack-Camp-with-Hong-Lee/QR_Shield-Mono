@@ -15,6 +15,7 @@
     },
     "android": {
       "package": "com.qrshield.app",
+      "usesCleartextTraffic": true,
       "permissions": ["android.permission.CAMERA"]
     },
     "plugins": [
