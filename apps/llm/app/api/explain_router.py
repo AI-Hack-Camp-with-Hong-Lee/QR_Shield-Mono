@@ -13,7 +13,7 @@ from app.schemas.explain import (
     LevelLiteral,
 )
 from app.schemas.score import ScoreRequest, ScoreResponse
-from app.services.gemini_service import explain_with_gemini
+from app.services.llm_explain import explain_with_llm
 from app.services.middle_score import compute_middle_score, normalize_url
 
 router = APIRouter(tags=["explain"])
@@ -51,7 +51,7 @@ async def agent_explain(
     body: ExplainRequest,
     settings: Settings = Depends(get_settings),
 ) -> ExplainResponse:
-    return await asyncio.to_thread(explain_with_gemini, settings, body)
+    return await asyncio.to_thread(explain_with_llm, settings, body)
 
 
 @router.post(
@@ -86,7 +86,7 @@ async def agent_analyze(
         grade_display=grade_ko,
     )
 
-    gemini = await asyncio.to_thread(explain_with_gemini, settings, explain_body)
+    explained = await asyncio.to_thread(explain_with_llm, settings, explain_body)
 
     return AnalyzeResponse(
         url=url,
@@ -97,8 +97,8 @@ async def agent_analyze(
         level=level,
         grade_display=grade_ko,
         risk_factors=risk_factors,
-        explanation=gemini.explanation,
-        action_guide=gemini.action_guide,
-        used_llm=gemini.used_llm,
-        model=gemini.model,
+        explanation=explained.explanation,
+        action_guide=explained.action_guide,
+        used_llm=explained.used_llm,
+        model=explained.model,
     )
